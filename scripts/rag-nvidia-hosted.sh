@@ -133,6 +133,17 @@ cmd_setup() {
 }
 
 # ------------------------------------------------------------------------------
+_dc() {
+    # Wrapper that passes the correct env file to docker compose when available,
+    # preventing deploy/compose/.env (on-prem defaults) from overriding
+    # the cloud settings sourced from nvidia-hosted-cuvs.env.
+    if [[ -n "${DOCKER_ENV:-}" && -f "${DOCKER_ENV}" ]]; then
+        docker compose -f "$COMPOSE_FILE" --env-file "$DOCKER_ENV" "$@"
+    else
+        docker compose -f "$COMPOSE_FILE" "$@"
+    fi
+}
+
 cmd_start() {
     section "=== Starting NVIDIA RAG Blueprint ==="
 
@@ -145,8 +156,14 @@ cmd_start() {
     # shellcheck source=/dev/null
     source "$ENV_FILE"
 
+    # Dump the current shell env to a temp file in KEY=VALUE format so that
+    # docker compose --env-file can use it (overriding the auto-loaded .env).
+    DOCKER_ENV=$(mktemp)
+    trap 'rm -f "$DOCKER_ENV"' EXIT
+    env > "$DOCKER_ENV"
+
     info "Starting services (this may take 5–10 min on first run)..."
-    docker compose -f "$COMPOSE_FILE" up -d
+    _dc up -d
 
     section "=== Waiting for Services ==="
     _wait_healthy
@@ -169,7 +186,7 @@ cmd_start() {
 # ------------------------------------------------------------------------------
 cmd_status() {
     section "=== Containers ==="
-    docker compose -f "$COMPOSE_FILE" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
+    _dc ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
         docker ps --filter "name=rag-\|name=milvus\|name=ingestor" \
                   --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
@@ -192,17 +209,17 @@ cmd_logs() {
     local service="${1:-}"
     if [[ -n "$service" ]]; then
         info "Tailing logs for: $service  (Ctrl+C to stop)"
-        docker compose -f "$COMPOSE_FILE" logs -f "$service"
+        _dc logs -f "$service"
     else
         info "Tailing logs for all services  (Ctrl+C to stop)"
-        docker compose -f "$COMPOSE_FILE" logs -f
+        _dc logs -f
     fi
 }
 
 # ------------------------------------------------------------------------------
 cmd_stop() {
     section "=== Stopping Services ==="
-    docker compose -f "$COMPOSE_FILE" down
+    _dc down
     ok "Services stopped (data volumes preserved)"
 }
 
@@ -212,7 +229,7 @@ cmd_clean() {
     warn "This will delete all vector database data and ingested documents."
     read -r -p "  Continue? [y/N] " confirm
     if [[ "${confirm,,}" == "y" ]]; then
-        docker compose -f "$COMPOSE_FILE" down -v
+        _dc down -v
         ok "Services stopped and volumes removed"
     else
         info "Cancelled"
