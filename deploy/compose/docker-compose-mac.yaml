@@ -1,0 +1,281 @@
+# ==========================
+# NVIDIA RAG Blueprint - Mac (Apple Silicon)
+# ==========================
+# CPU-only Milvus (HNSW index). All AI NIMs use NVIDIA API Catalog.
+# NVIDIA GPU is not required.
+#
+# Usage:
+#   source deploy/compose/mac-m4.env
+#   docker compose -f deploy/compose/docker-compose-mac.yaml up -d
+#
+# Note: NVIDIA Blueprint images (rag-server, ingestor-server, rag-frontend) are
+# amd64-only and run via Rosetta 2 on Apple Silicon. Performance is acceptable
+# for development and testing workloads.
+# ==========================
+
+services:
+  # ==========================
+  # CPU Vector Database (Milvus, no GPU)
+  # ==========================
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.5}
+    platform: linux/amd64
+    command: >
+      bash -lc 'tmpfile=$(mktemp) &&
+      sed "s/bucketName: a-bucket/bucketName: ${MINIO_BUCKET:-nv-ingest}/" /milvus/configs/milvus.yaml > "$$tmpfile" &&
+      cat "$$tmpfile" > /milvus/configs/milvus.yaml &&
+      rm "$$tmpfile" &&
+      milvus run standalone'
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9010
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.6.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9011:9011"
+      - "9010:9010"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/minio:/minio_data
+    command: minio server /minio_data --console-address ":9011" --address ":9010"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9010/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ==========================
+  # Redis for task management
+  # ==========================
+  redis:
+    container_name: rag-redis
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================
+  # Ingestor Server (amd64, runs via Rosetta on Apple Silicon)
+  # ==========================
+  ingestor-server:
+    container_name: ingestor-server
+    image: nvcr.io/nvidia/blueprint/rag-ingestor-server:${TAG:-2.4.0}
+    platform: linux/amd64
+    ports:
+      - "8082:8082"
+    expose:
+      - "8082"
+    environment:
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+
+      APP_VECTORSTORE_URL: "http://milvus:19530"
+      APP_VECTORSTORE_NAME: "milvus"
+      APP_VECTORSTORE_INDEXTYPE: ${APP_VECTORSTORE_INDEXTYPE:-HNSW}
+      APP_VECTORSTORE_ENABLEGPUSEARCH: ${APP_VECTORSTORE_ENABLEGPUSEARCH:-False}
+      APP_VECTORSTORE_ENABLEGPUINDEX: ${APP_VECTORSTORE_ENABLEGPUINDEX:-False}
+
+      APP_EMBEDDINGS_SERVERURL: ${APP_EMBEDDINGS_SERVERURL:-https://integrate.api.nvidia.com/v1}
+      APP_EMBEDDINGS_MODELNAME: ${APP_EMBEDDINGS_MODELNAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
+      APP_EMBEDDINGS_DIMENSIONS: ${APP_EMBEDDINGS_DIMENSIONS:-2048}
+      APP_EMBEDDINGS_APIKEY: ${APP_EMBEDDINGS_APIKEY:-${NVIDIA_API_KEY}}
+
+      OCR_HTTP_ENDPOINT: ${OCR_HTTP_ENDPOINT:-https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-ocr}
+      OCR_INFER_PROTOCOL: ${OCR_INFER_PROTOCOL:-http}
+      OCR_MODEL_NAME: ${OCR_MODEL_NAME:-scene_text_ensemble}
+      OCR_APIKEY: ${OCR_APIKEY:-${NVIDIA_API_KEY}}
+
+      YOLOX_HTTP_ENDPOINT: ${YOLOX_HTTP_ENDPOINT:-https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-page-elements-v3}
+      YOLOX_INFER_PROTOCOL: ${YOLOX_INFER_PROTOCOL:-http}
+      YOLOX_APIKEY: ${YOLOX_APIKEY:-${NVIDIA_API_KEY}}
+
+      YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT: ${YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT:-https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-graphic-elements-v1}
+      YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL: ${YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL:-http}
+      YOLOX_GRAPHIC_ELEMENTS_APIKEY: ${YOLOX_GRAPHIC_ELEMENTS_APIKEY:-${NVIDIA_API_KEY}}
+
+      YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT: ${YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT:-https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-table-structure-v1}
+      YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL: ${YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL:-http}
+      YOLOX_TABLE_STRUCTURE_APIKEY: ${YOLOX_TABLE_STRUCTURE_APIKEY:-${NVIDIA_API_KEY}}
+
+      MINIO_ENDPOINT: "minio:9010"
+      MINIO_ACCESSKEY: "minioadmin"
+      MINIO_SECRETKEY: "minioadmin"
+      MINIO_BUCKET: ${NVINGEST_MINIO_BUCKET:-nv-ingest}
+
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+
+      APP_NVINGEST_ENABLEPDFSPLITTER: ${APP_NVINGEST_ENABLEPDFSPLITTER:-True}
+      APP_NVINGEST_CHUNKSIZE: ${APP_NVINGEST_CHUNKSIZE:-512}
+      APP_NVINGEST_CHUNKOVERLAP: ${APP_NVINGEST_CHUNKOVERLAP:-150}
+
+      APP_TRACING_ENABLED: ${APP_TRACING_ENABLED:-False}
+
+    volumes:
+      - ${DATASET_ROOT:-ingest}:/data
+    depends_on:
+      milvus:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    shm_size: 5gb
+
+  # ==========================
+  # RAG Server (amd64, runs via Rosetta on Apple Silicon)
+  # ==========================
+  rag-server:
+    container_name: rag-server
+    image: nvcr.io/nvidia/blueprint/rag-server:${TAG:-2.4.0}
+    platform: linux/amd64
+    ports:
+      - "8081:8081"
+    expose:
+      - "8081"
+    environment:
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+
+      APP_LLM_APIKEY: ${APP_LLM_APIKEY:-${NVIDIA_API_KEY}}
+      APP_EMBEDDINGS_APIKEY: ${APP_EMBEDDINGS_APIKEY:-${NVIDIA_API_KEY}}
+      APP_RANKING_APIKEY: ${APP_RANKING_APIKEY:-${NVIDIA_API_KEY}}
+      SUMMARY_LLM_APIKEY: ${SUMMARY_LLM_APIKEY:-${NVIDIA_API_KEY}}
+      REFLECTION_LLM_APIKEY: ${REFLECTION_LLM_APIKEY:-${NVIDIA_API_KEY}}
+
+      APP_VECTORSTORE_URL: "http://milvus:19530"
+      APP_VECTORSTORE_NAME: "milvus"
+      APP_VECTORSTORE_INDEXTYPE: ${APP_VECTORSTORE_INDEXTYPE:-HNSW}
+      APP_VECTORSTORE_ENABLEGPUSEARCH: ${APP_VECTORSTORE_ENABLEGPUSEARCH:-False}
+      APP_VECTORSTORE_ENABLEGPUINDEX: ${APP_VECTORSTORE_ENABLEGPUINDEX:-False}
+      COLLECTION_NAME: ${COLLECTION_NAME:-multimodal_data}
+      APP_RETRIEVER_SCORETHRESHOLD: ${APP_RETRIEVER_SCORETHRESHOLD:-0.25}
+      VECTOR_DB_TOPK: ${VECTOR_DB_TOPK:-100}
+      APP_RETRIEVER_TOPK: ${APP_RETRIEVER_TOPK:-10}
+
+      APP_LLM_SERVERURL: ${APP_LLM_SERVERURL:-}
+      APP_LLM_MODELNAME: ${APP_LLM_MODELNAME:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-32768}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
+      LLM_TOP_P: ${LLM_TOP_P:-1.0}
+
+      APP_EMBEDDINGS_SERVERURL: ${APP_EMBEDDINGS_SERVERURL:-https://integrate.api.nvidia.com/v1}
+      APP_EMBEDDINGS_MODELNAME: ${APP_EMBEDDINGS_MODELNAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
+      APP_EMBEDDINGS_DIMENSIONS: ${APP_EMBEDDINGS_DIMENSIONS:-2048}
+
+      APP_RANKING_SERVERURL: ${APP_RANKING_SERVERURL:-}
+      APP_RANKING_MODELNAME: ${APP_RANKING_MODELNAME:-nvidia/llama-3.2-nv-rerankqa-1b-v2}
+      ENABLE_RERANKER: ${ENABLE_RERANKER:-True}
+      RERANKER_CONFIDENCE_THRESHOLD: ${RERANKER_CONFIDENCE_THRESHOLD:-0.0}
+
+      APP_QUERYREWRITER_SERVERURL: ${APP_QUERYREWRITER_SERVERURL:-}
+      APP_QUERYREWRITER_MODELNAME: ${APP_QUERYREWRITER_MODELNAME:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+      ENABLE_QUERYREWRITER: ${ENABLE_QUERYREWRITER:-False}
+
+      APP_FILTEREXPRESSIONGENERATOR_SERVERURL: ${APP_FILTEREXPRESSIONGENERATOR_SERVERURL:-}
+      APP_FILTEREXPRESSIONGENERATOR_MODELNAME: ${APP_FILTEREXPRESSIONGENERATOR_MODELNAME:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+      ENABLE_FILTER_GENERATOR: ${ENABLE_FILTER_GENERATOR:-False}
+
+      SUMMARY_LLM: ${SUMMARY_LLM:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+      SUMMARY_LLM_SERVERURL: ${SUMMARY_LLM_SERVERURL:-}
+
+      REFLECTION_LLM: ${REFLECTION_LLM:-nvidia/llama-3.3-nemotron-super-49b-v1.5}
+      REFLECTION_LLM_SERVERURL: ${REFLECTION_LLM_SERVERURL:-}
+      ENABLE_REFLECTION: ${ENABLE_REFLECTION:-false}
+
+      MINIO_ENDPOINT: "minio:9010"
+      MINIO_ACCESSKEY: "minioadmin"
+      MINIO_SECRETKEY: "minioadmin"
+
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+
+      APP_TEXTSPLITTER_CHUNKSIZE: ${APP_TEXTSPLITTER_CHUNKSIZE:-2000}
+      APP_TEXTSPLITTER_CHUNKOVERLAP: ${APP_TEXTSPLITTER_CHUNKOVERLAP:-200}
+
+      ENABLE_CITATIONS: ${ENABLE_CITATIONS:-True}
+      ENABLE_GUARDRAILS: ${ENABLE_GUARDRAILS:-False}
+      LOGLEVEL: ${LOGLEVEL:-INFO}
+      ENABLE_MULTITURN: ${ENABLE_MULTITURN:-True}
+
+      PROMPT_CONFIG_FILE: "/prompt.yaml"
+
+    volumes:
+      - ./src/nvidia_rag/rag_server/prompt.yaml:/prompt.yaml:ro
+    depends_on:
+      milvus:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    shm_size: 5gb
+
+  # ==========================
+  # RAG Frontend UI (amd64, runs via Rosetta on Apple Silicon)
+  # ==========================
+  rag-frontend:
+    container_name: rag-frontend
+    image: nvcr.io/nvidia/blueprint/rag-frontend:${TAG:-2.4.0}
+    platform: linux/amd64
+    build:
+      context: ../../frontend
+      dockerfile: ./Dockerfile
+      args:
+        VITE_API_CHAT_URL: ${VITE_API_CHAT_URL:-http://rag-server:8081/v1}
+        VITE_API_VDB_URL: ${VITE_API_VDB_URL:-http://ingestor-server:8082/v1}
+        VITE_MILVUS_URL: http://milvus:19530
+    ports:
+      - "8090:3000"
+    environment:
+      VITE_API_CHAT_URL: ${VITE_API_CHAT_URL:-http://rag-server:8081/v1}
+      VITE_API_VDB_URL: ${VITE_API_VDB_URL:-http://ingestor-server:8082/v1}
+      VITE_MILVUS_URL: http://milvus:19530
+    depends_on:
+      - rag-server
+
+networks:
+  default:
+    name: nvidia-rag-mac

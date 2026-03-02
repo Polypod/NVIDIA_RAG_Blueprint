@@ -9,32 +9,52 @@ reducing hallucinations.
 
 ## What's Added Here
 
-On top of the upstream NVIDIA RAG Blueprint, this repository adds:
+On top of the upstream NVIDIA RAG Blueprint, this repository adds hardware-specific getting-started guides and management scripts for getting up and running quickly without needing to read the full documentation.
 
 | Addition | Description |
 | -------- | ----------- |
-| [docs/getting-started-nvidia-hosted.md](docs/getting-started-nvidia-hosted.md) | Step-by-step guide for deploying on a **Core i9 + RTX 4070** workstation using NVIDIA API Catalog NIMs and a local cuVS GPU vector database — no model downloads required |
-| [scripts/rag-nvidia-hosted.sh](scripts/rag-nvidia-hosted.sh) | Management script: `setup`, `start`, `status`, `logs`, `stop`, `clean` |
+| [docs/getting-started-nvidia-hosted.md](docs/getting-started-nvidia-hosted.md) | Guide for **Core i9 + RTX 4070** — NVIDIA API Catalog NIMs + local cuVS GPU vector database |
+| [scripts/rag-nvidia-hosted.sh](scripts/rag-nvidia-hosted.sh) | Management script for the RTX 4070 setup |
+| [docs/getting-started-mac-m4.md](docs/getting-started-mac-m4.md) | Guide for **MacBook Pro M4 Pro** (Apple Silicon) — NVIDIA API Catalog NIMs + CPU Milvus, no GPU required |
+| [scripts/rag-mac.sh](scripts/rag-mac.sh) | Management script for the Mac setup |
 
-## Quick Start (RTX 4070 / Single GPU)
-
-If you have one NVIDIA GPU and want to be up and running quickly with NVIDIA-hosted models:
+All guides share the same command pattern:
 
 ```bash
-git clone https://github.com/NVIDIA-AI-Blueprints/rag.git
-cd rag
-
 export NGC_API_KEY="nvapi-..."
-chmod +x scripts/rag-nvidia-hosted.sh
-
-./scripts/rag-nvidia-hosted.sh setup   # check prerequisites, NGC login
-./scripts/rag-nvidia-hosted.sh start   # deploy, wait for health, print URLs
-./scripts/rag-nvidia-hosted.sh status  # containers, API health, GPU usage
+./scripts/rag-<platform>.sh setup    # check prerequisites, NGC login
+./scripts/rag-<platform>.sh start    # deploy, wait for health, print URLs
+./scripts/rag-<platform>.sh status   # containers, API health, resource usage
+./scripts/rag-<platform>.sh logs     # tail logs (or: logs <service-name>)
+./scripts/rag-<platform>.sh stop     # stop, keep data
+./scripts/rag-<platform>.sh clean    # stop, remove all data
 ```
 
-Then open <http://localhost:8090> in your browser.
+## Quick Start
 
-See [docs/getting-started-nvidia-hosted.md](docs/getting-started-nvidia-hosted.md) for the full walkthrough.
+### RTX 4070 (Ubuntu) — GPU-accelerated vector DB
+
+```bash
+git clone https://github.com/NVIDIA-AI-Blueprints/rag.git && cd rag
+export NGC_API_KEY="nvapi-..."
+chmod +x scripts/rag-nvidia-hosted.sh
+./scripts/rag-nvidia-hosted.sh setup && ./scripts/rag-nvidia-hosted.sh start
+```
+
+See [docs/getting-started-nvidia-hosted.md](docs/getting-started-nvidia-hosted.md).
+
+### Mac M4 Pro (Apple Silicon) — CPU vector DB, no GPU needed
+
+```bash
+git clone https://github.com/NVIDIA-AI-Blueprints/rag.git && cd rag
+export NGC_API_KEY="nvapi-..."
+chmod +x scripts/rag-mac.sh
+./scripts/rag-mac.sh setup && ./scripts/rag-mac.sh start
+```
+
+See [docs/getting-started-mac-m4.md](docs/getting-started-mac-m4.md).
+
+Then open <http://localhost:8090> in your browser.
 
 ## Architecture
 
@@ -42,7 +62,7 @@ See [docs/getting-started-nvidia-hosted.md](docs/getting-started-nvidia-hosted.m
   <img src="./docs/assets/arch_diagram.png" width="750">
   </p>
 
-The NVIDIA API Catalog deployment used in this guide routes all AI workloads (LLM, embeddings, reranker, OCR) to NVIDIA-hosted NIMs, while the GPU runs only the cuVS-accelerated Milvus vector database locally.
+Both deployments route all AI workloads (LLM, embeddings, reranker, OCR) to NVIDIA-hosted NIMs. The difference is the local vector database: GPU_CAGRA on the RTX 4070, HNSW (CPU) on Mac.
 
 ## Full Documentation
 
