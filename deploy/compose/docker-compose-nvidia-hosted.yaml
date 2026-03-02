@@ -111,6 +111,7 @@ services:
   ingestor-server:
     container_name: ingestor-server
     image: nvcr.io/nvidia/blueprint/ingestor-server:${TAG:-2.4.0}
+    command: --port 8082 --host 0.0.0.0 --workers 1
     ports:
       - "8082:8082"
     expose:
@@ -190,6 +191,7 @@ services:
   rag-server:
     container_name: rag-server
     image: nvcr.io/nvidia/blueprint/rag-server:${TAG:-2.4.0}
+    command: --port 8081 --host 0.0.0.0 --workers 1
     ports:
       - "8081:8081"
     expose:
