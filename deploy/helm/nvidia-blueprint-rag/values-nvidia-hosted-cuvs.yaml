@@ -1,0 +1,441 @@
+# ==========================
+# NVIDIA RAG Blueprint - NVIDIA API Catalog Hosted NIMs with cuVS
+# ==========================
+# This configuration file deploys the RAG Blueprint using
+# NVIDIA API Catalog-hosted NIM microservices with a cuVS-accelerated
+# vector database requiring only 1 GPU.
+#
+# Usage:
+#   helm install rag ./deploy/helm/nvidia-blueprint-rag \
+#     -f deploy/helm/nvidia-blueprint-rag/values-nvidia-hosted-cuvs.yaml \
+#     --set ngcApiSecret.password=$NGC_API_KEY
+#
+# Prerequisites:
+# - NVIDIA API Key (get from https://build.nvidia.com/)
+# - Kubernetes cluster with NVIDIA GPU operators
+# - 1 GPU for cuVS-accelerated Milvus vector database
+# ==========================
+
+# -- Global chart configuration
+nameOverride: ""
+fullnameOverride: "rag-server"
+
+# subsection: rag-server
+# RAG Orchestrator Service
+# -- Kubernetes scheduling
+nodeSelector:
+  gpu: nvidia
+affinity: {}
+tolerations: []
+
+# -- Common service account for rag-server
+serviceAccount:
+  create: true
+  name: ""
+  automount: true
+  annotations: {}
+
+# -- Replicas for rag-server
+replicaCount: 1
+
+# -- Namespace for documentation/reference; not actively used in templates
+namespace: "nv-nvidia-blueprint-rag"
+
+# -- Image pull secret for all images used by this chart
+imagePullSecret:
+  name: "ngc-secret"
+  registry: "nvcr.io"
+  username: "$oauthtoken"
+  password: ""
+  create: true
+
+# -- Secret containing API keys for NVIDIA NGC model registry
+ngcApiSecret:
+  name: "ngc-api"
+  password: ""
+  create: true
+
+# -- Secret containing service-specific API keys for RAG services
+apiKeysSecret:
+  # -- Enable automatic secret creation from values below
+  create: true
+  # -- Name of the secret to create or reference
+  name: "rag-api-keys"
+  # -- Reference to existing secret (if set, chart won't create secret, will reference this instead)
+  existingSecret: ""
+  # -- Service-specific API keys (optional, empty means use NVIDIA_API_KEY fallback)
+  # Note: Non-empty values act as enable flags - only non-empty keys are injected as env vars
+  llmApiKey: ""
+  embeddingsApiKey: ""
+  rankingApiKey: ""
+  queryRewriterApiKey: ""
+  filterExpressionGeneratorApiKey: ""
+  vlmApiKey: ""
+  summaryLlmApiKey: ""
+  reflectionLlmApiKey: ""
+
+# -- RAG server container image
+image:
+  repository: nvcr.io/nvidia/blueprint/rag-server
+  tag: "2.4.0"
+  pullPolicy: Always
+
+# -- RAG server service configuration
+service:
+  type: ClusterIP
+  port: 8081
+
+# -- RAG server container resources
+resources:
+  limits:
+    memory: "64Gi"
+  requests:
+    memory: "8Gi"
+
+# -- Probes for rag-server (optional)
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# -- RAG server runtime configuration
+server:
+  workers: 8
+
+# -- Enable/disable creation of prompt ConfigMap
+promptConfig:
+  enabled: true
+
+# -- Environment variables for rag-server
+envVars:
+  EXAMPLE_PATH: "./nvidia_rag/rag_server"
+  PROMPT_CONFIG_FILE: "/prompt.yaml"
+  PROMETHEUS_MULTIPROC_DIR: "/tmp-data/prom_data"
+
+  ##===Authentication===
+  ## Service-specific API keys are now managed via apiKeysSecret section above.
+  ## See apiKeysSecret configuration for details on setting service-specific keys.
+
+  ##===MINIO specific configurations used to store multimodal base64 content===
+  MINIO_ENDPOINT: "rag-minio:9000"
+  MINIO_ACCESSKEY: "minioadmin"
+  MINIO_SECRETKEY: "minioadmin"
+
+  ##===Redis configurations for summary status tracking===
+  REDIS_HOST: "rag-redis-master"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+
+  ##===Vector DB specific configurations===
+  # URL on which vectorstore is hosted
+  APP_VECTORSTORE_URL: "http://milvus:19530" # Use "http://rag-eck-elasticsearch-es-http:9200" for elasticsearch
+  # Type of vectordb used to store embedding supported type "milvus" or "elasticsearch"
+  APP_VECTORSTORE_NAME: "milvus"
+  # Index type (e.g., GPU_CAGRA) - cuVS accelerated
+  APP_VECTORSTORE_INDEXTYPE: "GPU_CAGRA"
+  # Type of vectordb search to be used
+  APP_VECTORSTORE_SEARCHTYPE: "dense"
+  # Type of ranker to use for vector store in case of Hybrid Search
+  APP_VECTORSTORE_RANKER_TYPE: "rrf" # Can be "rrf" or "weighted"
+  # Weight for dense vector search in case of "weighted" Hybrid Search
+  APP_VECTORSTORE_DENSE_WEIGHT: "0.5"
+  # Weight for sparse vector search in case of "weighted" Hybrid Search
+  APP_VECTORSTORE_SPARSE_WEIGHT: "0.5"
+  # Boolean to control GPU search for milvus vectorstore specific to rag-server
+  APP_VECTORSTORE_ENABLEGPUSEARCH: "True"
+  # Boolean to control GPU indexing for milvus vectorstore
+  APP_VECTORSTORE_ENABLEGPUINDEX: "True"
+  # ef: Parameter controlling query time/accuracy trade-off. Higher ef leads to more accurate but slower search.
+  APP_VECTORSTORE_EF: "100"
+  # Username for vector store authentication
+  APP_VECTORSTORE_USERNAME: ""
+  # Password for vector store authentication
+  APP_VECTORSTORE_PASSWORD: ""
+
+  # vectorstore collection name to store embeddings
+  COLLECTION_NAME: "multimodal_data"
+  APP_RETRIEVER_SCORETHRESHOLD: "0.25"
+  # Top K from vector DB, which goes as input to reranker model - not applicable if ENABLE_RERANKER is set to False
+  VECTOR_DB_TOPK: "100"
+  # Number of document chunks to insert in LLM prompt
+  APP_RETRIEVER_TOPK: "10"
+
+  ##===LLM Model specific configurations===
+  # Using NVIDIA API Catalog (empty SERVERURL)
+  APP_LLM_MODELNAME: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  # URL on which LLM model is hosted. Empty = NVIDIA API Catalog
+  APP_LLM_SERVERURL: ""
+  # LLM model parameters
+  LLM_MAX_TOKENS: "32768"
+  LLM_TEMPERATURE: "0"
+  LLM_TOP_P: "1.0"
+
+  ##===Query Rewriter Model specific configurations===
+  # Using NVIDIA API Catalog
+  APP_QUERYREWRITER_MODELNAME: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  APP_QUERYREWRITER_SERVERURL: ""
+
+  ##===Filter Expression Generator Model specific configurations===
+  # Using NVIDIA API Catalog
+  APP_FILTEREXPRESSIONGENERATOR_MODELNAME: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  APP_FILTEREXPRESSIONGENERATOR_SERVERURL: ""
+  # enable filter expression generator for natural language to filter expression conversion
+  ENABLE_FILTER_GENERATOR: "False"
+
+  ##===Embedding Model specific configurations===
+  # Using NVIDIA API Catalog
+  APP_EMBEDDINGS_SERVERURL: "https://integrate.api.nvidia.com/v1"
+  APP_EMBEDDINGS_MODELNAME: "nvidia/llama-3.2-nv-embedqa-1b-v2"
+  APP_EMBEDDINGS_DIMENSIONS: "2048"
+
+  ##===Reranking Model specific configurations===
+  # Using NVIDIA API Catalog
+  APP_RANKING_SERVERURL: ""
+  APP_RANKING_MODELNAME: "nvidia/llama-3.2-nv-rerankqa-1b-v2"
+  ENABLE_RERANKER: "True"
+
+  # === Text Splitter ===
+  APP_TEXTSPLITTER_CHUNKSIZE: "2000"
+  APP_TEXTSPLITTER_CHUNKOVERLAP: "200"
+
+  # === General ===
+  # Choose whether to enable citations in the response
+  ENABLE_CITATIONS: "True"
+  # Choose whether to enable/disable guardrails
+  ENABLE_GUARDRAILS: "False"
+  # Log level for server, supported level NOTSET, DEBUG, INFO, WARN, ERROR, CRITICAL
+  LOGLEVEL: "INFO"
+  # enable multi-turn conversation in the rag chain
+  ENABLE_MULTITURN: "True"
+  # enable query rewriting for multiturn conversation
+  ENABLE_QUERYREWRITER: "False"
+
+  # === Reflection ===
+  ENABLE_REFLECTION: "false"
+  MAX_REFLECTION_LOOP: "3"
+  CONTEXT_RELEVANCE_THRESHOLD: "1"
+  RESPONSE_GROUNDEDNESS_THRESHOLD: "1"
+  REFLECTION_LLM: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  # Empty = NVIDIA API Catalog
+  REFLECTION_LLM_SERVERURL: ""
+
+  # === Summarization ===
+  SUMMARY_LLM: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  # Empty = NVIDIA API Catalog
+  SUMMARY_LLM_SERVERURL: ""
+
+  # === VLM (disabled by default for cloud NIMs) ===
+  ENABLE_VLM_INFERENCE: "false"
+
+# -- Ingestor Server
+# subsection: ingestor-server
+# Ingestor API Service
+ingestor-server:
+  enabled: true
+  appName: ingestor-server
+
+  # -- Pod scheduling
+  nodeSelector:
+    gpu: nvidia
+  affinity: {}
+  tolerations: []
+
+  replicaCount: 1
+
+  imagePullSecret:
+    create: false
+    name: "ngc-secret"
+    registry: "nvcr.io"
+    username: "$oauthtoken"
+    password: ""
+
+  image:
+    repository: nvcr.io/nvidia/blueprint/ingestor-server
+    tag: "2.4.0"
+    pullPolicy: Always
+
+  # -- Service config for ingestor-server
+  service:
+    type: ClusterIP
+    port: 8082
+
+  server:
+    workers: 1
+
+  resources:
+    limits:
+      memory: "25Gi"
+    requests:
+      memory: "25Gi"
+
+  envVars:
+    # Path to example directory relative to repo root
+    EXAMPLE_PATH: "src/nvidia_rag/ingestor_server"
+    # Absolute path to custom prompt.yaml file
+    PROMPT_CONFIG_FILE: "/prompt.yaml"
+
+    # === Vector Store Configurations ===
+    APP_VECTORSTORE_URL: "http://milvus:19530"
+    APP_VECTORSTORE_NAME: "milvus"
+    APP_VECTORSTORE_SEARCHTYPE: "dense"
+    APP_VECTORSTORE_RANKER_TYPE: "rrf"
+    APP_VECTORSTORE_DENSE_WEIGHT: "0.5"
+    APP_VECTORSTORE_SPARSE_WEIGHT: "0.5"
+    # cuVS GPU acceleration
+    APP_VECTORSTORE_ENABLEGPUINDEX: "True"
+    APP_VECTORSTORE_ENABLEGPUSEARCH: "True"
+    COLLECTION_NAME: "multimodal_data"
+
+    # === MinIO Configurations ===
+    MINIO_ENDPOINT: "rag-minio:9000"
+    MINIO_ACCESSKEY: "minioadmin"
+    MINIO_SECRETKEY: "minioadmin"
+
+    # === Embeddings Configurations - NVIDIA API Catalog ===
+    APP_EMBEDDINGS_SERVERURL: "https://integrate.api.nvidia.com/v1"
+    APP_EMBEDDINGS_MODELNAME: "nvidia/llama-3.2-nv-embedqa-1b-v2"
+    APP_EMBEDDINGS_DIMENSIONS: "2048"
+
+    # === NV-Ingest extraction configurations ===
+    APP_NVINGEST_PDFEXTRACTMETHOD: "None"
+    APP_NVINGEST_EXTRACTTEXT: "True"
+    APP_NVINGEST_EXTRACTINFOGRAPHICS: "False"
+    APP_NVINGEST_EXTRACTTABLES: "True"
+    APP_NVINGEST_EXTRACTCHARTS: "True"
+    APP_NVINGEST_EXTRACTIMAGES: "False"
+
+    # === OCR - NVIDIA API Catalog ===
+    # Empty HTTP endpoints = NVIDIA API Catalog
+    YOLOX_HTTP_ENDPOINT: "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-page-elements-v3"
+    YOLOX_INFER_PROTOCOL: "http"
+    YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT: "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-graphic-elements-v1"
+    YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL: "http"
+    YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT: "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-table-structure-v1"
+    YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL: "http"
+    OCR_HTTP_ENDPOINT: "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-ocr"
+    OCR_INFER_PROTOCOL: "http"
+    OCR_MODEL_NAME: "scene_text_ensemble"
+
+    # Summary Model - NVIDIA API Catalog
+    SUMMARY_LLM: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    SUMMARY_LLM_SERVERURL: ""
+    SUMMARY_LLM_MAX_CHUNK_LENGTH: "9000"
+    SUMMARY_CHUNK_OVERLAP: "400"
+    SUMMARY_LLM_TEMPERATURE: "0.0"
+    SUMMARY_LLM_TOP_P: "1.0"
+
+    # === NV-Ingest splitting configurations ===
+    APP_NVINGEST_CHUNKSIZE: "512"
+    APP_NVINGEST_CHUNKOVERLAP: "150"
+    APP_NVINGEST_ENABLEPDFSPLITTER: "True"
+
+    # === Redis configurations ===
+    REDIS_HOST: "rag-redis-master"
+    REDIS_PORT: "6379"
+    REDIS_DB: "0"
+
+    # === General ===
+    ENABLE_CITATIONS: "True"
+    LOGLEVEL: "INFO"
+
+  # -- Persistent storage for ingestor-server data directory
+  persistence:
+    enabled: true
+    existingClaim: ""
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 50Gi
+    mountPath: "/data/"
+    subPath: ""
+
+# -- Frontend
+# subsection: frontend
+# rag frontend Frontend
+frontend:
+  enabled: true
+  appName: "rag-frontend"
+
+  replicaCount: 1
+
+  image:
+    repository: nvcr.io/nvidia/blueprint/rag-frontend
+    pullPolicy: IfNotPresent
+    tag: "2.4.0"
+
+  imagePullSecret:
+    name: "ngc-secret"
+    registry: "nvcr.io"
+    username: "$oauthtoken"
+    password: ""
+
+  service:
+    type: NodePort
+    port: 3000
+
+  envVars:
+    - name: VITE_API_CHAT_URL
+      value: "http://rag-server:8081/v1"
+    - name: VITE_API_VDB_URL
+      value: "http://ingestor-server:8082/v1"
+    - name: VITE_MILVUS_URL
+      value: "http://milvus:19530"
+
+# -- Milvus Configuration (cuVS GPU-accelerated)
+milvus:
+  enabled: true
+  # Use GPU-enabled Milvus
+  image:
+    repository: milvusdb/milvus
+    tag: v2.6.5-gpu
+    pullPolicy: IfNotPresent
+  
+  # GPU configuration for cuVS
+  gpu:
+    enabled: true
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+      requests:
+        nvidia.com/gpu: "1"
+  
+  # Index configuration - GPU CAGRA
+  indexNode:
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+      requests:
+        memory: "8Gi"
+  
+  queryNode:
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+      requests:
+        memory: "8Gi"
+
+# -- Disable self-hosted NIMs (using NVIDIA API Catalog instead)
+nim-llm:
+  enabled: false
+
+nemoretriever-embedding:
+  enabled: false
+
+nemoretriever-ranking:
+  enabled: false
+
+# -- Elasticsearch dependency toggle
+eck-elasticsearch:
+  enabled: false

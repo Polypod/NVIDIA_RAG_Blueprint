@@ -51,6 +51,7 @@ For detailed requirements, refer to [Support Matrix](support-matrix.md).
 
 - [Deploy with Docker (Self-Hosted Models)](deploy-docker-self-hosted.md)
 - [Deploy with Docker (NVIDIA-Hosted Models)](deploy-docker-nvidia-hosted.md)
+- [Deploy with Docker (NVIDIA API Catalog + cuVS Vector DB)](deploy-docker-nvidia-hosted-cuvs.md)
 - [Deploy on Kubernetes with Helm](deploy-helm.md)
 - [Deploy on Kubernetes with Helm from the repository](deploy-helm-from-repo.md)
 - [Deploy on Kubernetes with Helm and MIG Support](mig-deployment.md)
