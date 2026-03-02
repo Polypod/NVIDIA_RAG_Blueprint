@@ -110,7 +110,7 @@ services:
   # ==========================
   ingestor-server:
     container_name: ingestor-server
-    image: nvcr.io/nvidia/blueprint/rag-ingestor-server:${TAG:-2.4.0}
+    image: nvcr.io/nvidia/blueprint/ingestor-server:${TAG:-2.4.0}
     ports:
       - "8082:8082"
     expose:
@@ -174,7 +174,7 @@ services:
       APP_TRACING_ENABLED: ${APP_TRACING_ENABLED:-False}
       
     volumes:
-      - ${DATASET_ROOT:-ingest}:/data
+      - ${DATASET_ROOT:-./ingest}:/data
     depends_on:
       milvus:
         condition: service_healthy
