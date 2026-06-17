@@ -54,7 +54,7 @@ rag = [
     "prometheus-client>=0.20,<1.0",
     "azure-core>=1.35,<2.0",
     "azure-storage-blob>=12.26,<13.0",
-    "pyarrow>=21.0,<22.0",
+    "pyarrow>=21.0,<25.0",
 ]
 ingest = [
     # nv-ingest dependencies (required for ingestion operations)
@@ -75,7 +75,7 @@ ingest = [
     "opentelemetry-sdk>=1.29,<2.0",
     "azure-core>=1.35,<2.0",
     "azure-storage-blob>=12.26,<13.0",
-    "pyarrow>=21.0,<22.0",
+    "pyarrow>=21.0,<25.0",
     "setuptools>=80.10.2",
 ]
 all = [
@@ -97,7 +97,7 @@ all = [
     "opentelemetry-sdk>=1.29,<2.0",
     "azure-core>=1.35,<2.0",
     "azure-storage-blob>=12.26,<13.0",
-    "pyarrow>=21.0,<22.0",
+    "pyarrow>=21.0,<25.0",
     # Elasticsearch support
     "langchain-elasticsearch>=0.3",
 ]
